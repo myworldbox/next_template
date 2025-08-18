@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import GraphNet from "./item/graph/graph_net";
 import { CoreEnum } from "./core/core_enum";
+import GraphNet2 from "./item/graph/graph_net_2";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,6 +34,28 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+
+        <GraphNet2 focus="A" relations={[
+          /* parallel */
+          ["H", "I"],
+          ["I", "H"],
+          ["A", "B"],
+          ["B", "A"],
+          ["D", "C"],
+          ["C", "D"],
+          ["K", "L"],
+          ["L", "K"],
+
+          /* next */
+          ["H", "A"],
+          ["C", "B"],
+          ["C", "E"],
+          ["A", "G"],
+          ["A", "F"],
+          ["H", "J"],
+          ["H", "K"],
+          ["K", "M"]
+        ]} />
 
         <GraphNet focus="A" relations={
           [
