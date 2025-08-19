@@ -5,7 +5,7 @@ import { MagnifyingGlassIcon, SunIcon, MoonIcon } from '@heroicons/react/24/soli
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
-const limit = 200; // Reduced limit as requested
+const limit = 1000;
 const canvasSize = 5000;
 const cellSize = 160;
 const nodeRadius = 40;
@@ -40,70 +40,31 @@ const permute = (arr) => {
   return results;
 };
 
-const generatePermutations = (layer, graph, relations, depth) => {
+const generatePermutations = (layer) => {
   const n = layer.length;
   if (factorial(n) <= limit) {
     return permute(layer);
-  }
-
-  // Probability-based sampling using edge weights
-  const results = [layer.slice()];
-  const edgeWeights = new Map();
-  relations.forEach(({ from, to, type }) => {
-    if ((type === Step.next && depth > 0) || (type === Step.prev && depth < 0)) {
-      const key = `${from}|${to}`;
-      edgeWeights.set(key, (edgeWeights.get(key) || 0) + 1);
-    }
-  });
-
-  const getPermScore = (perm) => {
-    let score = 0;
-    for (let i = 0; i < perm.length - 1; i++) {
-      for (let j = i + 1; j < perm.length; j++) {
-        const key1 = `${perm[i]}|${perm[j]}`;
-        const key2 = `${perm[j]}|${perm[i]}`;
-        score += (edgeWeights.get(key1) || 0) + (edgeWeights.get(key2) || 0);
+  } else {
+    const results = [layer.slice()];
+    for (let i = 1; i < limit; i++) {
+      const perm = layer.slice();
+      for (let j = n - 1; j > 0; j--) {
+        const k = Math.floor(Math.random() * (j + 1));
+        [perm[j], perm[k]] = [perm[k], perm[j]];
       }
+      results.push(perm);
     }
-    return score;
-  };
-
-  for (let i = 1; i < limit; i++) {
-    const perm = layer.slice();
-    // Use Metropolis-Hastings-inspired sampling
-    for (let j = n - 1; j > 0; j--) {
-      const k = Math.floor(Math.random() * (j + 1));
-      const tempPerm = [...perm];
-      [tempPerm[j], tempPerm[k]] = [tempPerm[k], tempPerm[j]];
-      const currScore = getPermScore(perm);
-      const newScore = getPermScore(tempPerm);
-      const acceptanceProb = Math.min(1, Math.exp((currScore - newScore) / 10));
-      if (Math.random() < acceptanceProb) {
-        perm[j] = tempPerm[j];
-        perm[k] = tempPerm[k];
-      }
-    }
-    results.push(perm);
+    return results;
   }
-  return results;
 };
 
-const generateMultiLayerPermutations = (layers, indices, graph, relations, limit) => {
+const generateMultiLayerPermutations = (layers, indices, limit) => {
   const perms = [];
-  const layerPerms = indices.map(i => generatePermutations(layers[i], graph, relations, i - Math.floor(layers.length / 2)));
-
-  // Probabilistic combination using edge-based weights
-  const getCombinationScore = (combination) => {
-    let score = 0;
-    const tempLayers = layers.map(l => l.slice());
-    indices.forEach((idx, i) => {
-      tempLayers[idx] = combination[i];
-    });
-    const { sameDepthCrossings, diffDepthCrossings } = countCrossings(tempLayers, graph, relations);
-    return -(sameDepthCrossings + diffDepthCrossings); // Negative for minimization
-  };
-
-  if (layerPerms.reduce((acc, p) => acc * p.length, 1) <= limit) {
+  const layerPerms = indices.map(i => generatePermutations(layers[i]));
+  const totalPerms = layerPerms.reduce((acc, p) => acc * p.length, 1);
+  
+  if (totalPerms <= limit) {
+    // Generate all combinations
     const combine = (current, layerIdx) => {
       if (layerIdx === indices.length) {
         perms.push(current);
@@ -115,19 +76,14 @@ const generateMultiLayerPermutations = (layers, indices, graph, relations, limit
     };
     combine([], 0);
   } else {
-    const scores = new Map();
+    // Sample permutations
     for (let i = 0; i < limit; i++) {
       const combination = indices.map(idx => {
         const perms = layerPerms[indices.indexOf(idx)];
         return perms[Math.floor(Math.random() * perms.length)];
       });
-      const score = getCombinationScore(combination);
-      scores.set(combination, score);
       perms.push(combination);
     }
-    // Sort by score and keep top `limit` permutations
-    perms.sort((a, b) => scores.get(b) - scores.get(a));
-    perms.splice(limit);
   }
   return perms;
 };
@@ -319,70 +275,80 @@ export default function GraphNet({ focus, relations }) {
     const depths = Array.from(layerMap.keys()).sort((a, b) => a - b);
     let layers = depths.map(d => layerMap.get(d).slice());
 
-    // Initialize layers randomly to avoid barycenter-like bias
-    layers.forEach(layer => {
-      for (let i = layer.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [layer[i], layer[j]] = [layer[j], layer[i]];
-      }
-    });
+    // Initialize with degree-based sorting
+    const sortLayerByDegree = (layer) => {
+      return layer.sort((a, b) => {
+        const aDeg = (graph.get(a)?.[Step.next]?.size || 0) +
+                     (graph.get(a)?.[Step.prev]?.size || 0) +
+                     (graph.get(a)?.[Step.parallel]?.size || 0);
+        const bDeg = (graph.get(b)?.[Step.next]?.size || 0) +
+                     (graph.get(b)?.[Step.prev]?.size || 0) +
+                     (graph.get(b)?.[Step.parallel]?.size || 0);
+        return bDeg - aDeg;
+      });
+    };
+
+    layers.forEach(sortLayerByDegree);
 
     let bestLayers = layers.map(l => l.slice());
     let minCrossingsLocal = Infinity;
     let { sameDepthCrossings, diffDepthCrossings } = countCrossings(bestLayers, graph, relations);
     minCrossingsLocal = sameDepthCrossings + diffDepthCrossings;
 
-    // Probabilistic optimization using Monte Carlo sampling
-    const maxIterations = limit;
-    let temperature = 100;
-    const coolingRate = 0.95;
+    // Multi-layer permutation optimization
+    for (let numLayers = 1; numLayers <= layers.length; numLayers++) {
+      // Optimize the first numLayers together
+      const indices = Array.from({ length: numLayers }, (_, i) => i);
+      const multiPerms = generateMultiLayerPermutations(layers, indices, limit);
+      let localMin = minCrossingsLocal;
+      let localBestLayers = bestLayers.map(l => l.slice());
 
-    for (let iter = 0; iter < maxIterations; iter++) {
-      // Select a random subset of layers to permute (up to 3 for efficiency)
-      const numLayers = Math.min(3, layers.length);
-      const indices = [];
-      while (indices.length < numLayers) {
-        const idx = Math.floor(Math.random() * layers.length);
-        if (!indices.includes(idx)) indices.push(idx);
-      }
-
-      const multiPerms = generateMultiLayerPermutations(layers, indices, graph, relations, Math.floor(limit / numLayers));
       for (const permSet of multiPerms) {
-        const tempLayers = layers.map(l => l.slice());
+        const tempLayers = bestLayers.map(l => l.slice());
         indices.forEach((idx, i) => {
           tempLayers[idx] = permSet[i].slice();
         });
         const { sameDepthCrossings, diffDepthCrossings } = countCrossings(tempLayers, graph, relations);
         const total = sameDepthCrossings + diffDepthCrossings;
-
-        // Simulated annealing acceptance probability
-        const acceptanceProb = total < minCrossingsLocal
-          ? 1
-          : Math.exp((minCrossingsLocal - total) / temperature);
-        if (total < minCrossingsLocal || Math.random() < acceptanceProb) {
-          bestLayers = tempLayers.map(l => l.slice());
-          minCrossingsLocal = total;
+        if (total < localMin) {
+          localMin = total;
+          localBestLayers = tempLayers.map(l => l.slice());
         }
         if (total === 0) break;
       }
-      temperature *= coolingRate;
+
+      if (localMin < minCrossingsLocal) {
+        bestLayers = localBestLayers;
+        minCrossingsLocal = localMin;
+      }
+
       if (minCrossingsLocal === 0) break;
     }
 
-    // Final single-layer refinement
-    for (let li = 0; li < bestLayers.length; li++) {
-      const perms = generatePermutations(bestLayers[li], graph, relations, li - Math.floor(bestLayers.length / 2));
-      for (const perm of perms) {
-        const tempLayers = [...bestLayers.slice(0, li), perm, ...bestLayers.slice(li + 1)];
-        const { sameDepthCrossings, diffDepthCrossings } = countCrossings(tempLayers, graph, relations);
-        const total = sameDepthCrossings + diffDepthCrossings;
-        if (total < minCrossingsLocal) {
-          bestLayers[li] = perm.slice();
-          minCrossingsLocal = total;
+    // Final single-layer refinement if crossings remain
+    if (minCrossingsLocal > 0) {
+      for (let li = 0; li < bestLayers.length; li++) {
+        const perms = generatePermutations(bestLayers[li]);
+        let finalMin = minCrossingsLocal;
+        let finalBestPerm = bestLayers[li];
+
+        for (const perm of perms) {
+          const tempLayers = [...bestLayers.slice(0, li), perm, ...bestLayers.slice(li + 1)];
+          const { sameDepthCrossings, diffDepthCrossings } = countCrossings(tempLayers, graph, relations);
+          const total = sameDepthCrossings + diffDepthCrossings;
+          if (total < finalMin) {
+            finalMin = total;
+            finalBestPerm = perm.slice();
+          }
+          if (total === 0) break;
         }
-        if (total === 0) break;
+
+        if (finalMin < minCrossingsLocal) {
+          bestLayers[li] = finalBestPerm;
+          minCrossingsLocal = finalMin;
+        }
+        if (finalMin === 0) break;
       }
-      if (minCrossingsLocal === 0) break;
     }
 
     const pos = new Map();
