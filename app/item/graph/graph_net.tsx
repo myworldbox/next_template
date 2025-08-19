@@ -5,7 +5,7 @@ import { MagnifyingGlassIcon, ArrowsPointingOutIcon, SunIcon, MoonIcon } from '@
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
-const limit = 10000;
+const limit = 5000;
 const canvasSize = 5000;
 const cellSize = 160;
 const nodeRadius = 40;
@@ -109,7 +109,17 @@ const countCrossings = (layers, graph, relations) => {
       const v2Coord = { x: v2.x, y: v2.depth };
 
       if (u1.depth === v1.depth && u2.depth === v2.depth && u1.depth === u2.depth) {
-        if ((u1.x < u2.x && v1.x > v2.x) || (u1.x > u2.x && v1.x < v2.x)) {
+        // For parallel edges in the same depth, check if endpoints are interleaved
+        const positions = [u1.x, v1.x, u2.x, v2.x].sort((a, b) => a - b);
+        const u1Idx = positions.indexOf(u1.x);
+        const v1Idx = positions.indexOf(v1.x);
+        const u2Idx = positions.indexOf(u2.x);
+        const v2Idx = positions.indexOf(v2.x);
+        // Non-crossing if endpoints are adjacent (e.g., u1,v1,u2,v2 or u2,v2,u1,v1)
+        const isNonCrossing = (Math.abs(u1Idx - v1Idx) === 1 && Math.abs(u2Idx - v2Idx) === 1) &&
+          (Math.max(u1Idx, v1Idx) < Math.min(u2Idx, v2Idx) ||
+            Math.max(u2Idx, v2Idx) < Math.min(u1Idx, v1Idx));
+        if (!isNonCrossing) {
           sameDepthCrossings++;
         }
       } else {
@@ -171,7 +181,6 @@ export default function GraphNet({ focus, relations }) {
   useEffect(() => {
     if (!graph.size) return;
 
-    // Check if optimized layers exist and have zero crossings
     if (optimizedLayersRef.current) {
       const { sameDepthCrossings, diffDepthCrossings } = countCrossings(optimizedLayersRef.current, graph, relations);
       const totalCrossings = sameDepthCrossings + diffDepthCrossings;
@@ -274,7 +283,6 @@ export default function GraphNet({ focus, relations }) {
       if (totalCrossings < minCrossingsLocal) {
         minCrossingsLocal = totalCrossings;
         bestLayers = config.map(layer => [...layer]);
-        // Compute positions immediately to ensure consistency
         const pos = new Map();
         bestLayers.forEach((layer, i) => {
           const half = Math.floor(layer.length / 2);
@@ -285,7 +293,7 @@ export default function GraphNet({ focus, relations }) {
         bestPositions = pos;
         optimizedLayersRef.current = bestLayers;
         if (totalCrossings === 0) {
-          break; // Early stopping when zero crossings are found
+          break;
         }
       }
     }
@@ -370,9 +378,9 @@ export default function GraphNet({ focus, relations }) {
           <div
             key={n}
             className={`absolute w-20 h-20 rounded-full border-2 flex items-center justify-center font-semibold text-sm
-                              ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
-                              ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
-                              backdrop-blur-sm`}
+                                  ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
+                                  ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
+                                  backdrop-blur-sm`}
             style={{
               left: `${center.x + x * cellSize - nodeRadius}px`,
               top: `${center.y - y * cellSize - nodeRadius}px`,
@@ -480,15 +488,15 @@ export default function GraphNet({ focus, relations }) {
     <div
       ref={containerRef}
       className={`relative w-full h-screen overflow-hidden transition-colors duration-300
-                        ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
+                            ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
     >
       <div className="absolute top-4 left-4 z-30 flex space-x-2">
         <button
           className={`p-2 rounded-lg transition-all duration-200
-                            ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-                            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                                ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                                border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setFocusMode(prev => !prev)}
         >
           {focusMode ? (
@@ -503,8 +511,8 @@ export default function GraphNet({ focus, relations }) {
         </button>
         <button
           className={`p-2 rounded-lg transition-all duration-200
-                            ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-                            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                                ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                                border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setIsDarkMode(prev => !prev)}
         >
           {isDarkMode ? (
@@ -520,8 +528,8 @@ export default function GraphNet({ focus, relations }) {
       </div>
 
       <div className={`absolute bottom-4 left-4 z-30 p-3 rounded-lg shadow-lg transition-all duration-200
-                        ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
-                        border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+                            ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
+                            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
         <div className="flex items-center space-x-2">
           <svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={isDarkMode ? '#34d399' : '#16a34a'} strokeWidth="2" markerEnd="url(#arrow-legend-next)" /></svg>
           <span>Next</span>
