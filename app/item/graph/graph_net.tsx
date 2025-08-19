@@ -8,8 +8,8 @@ const Step = CoreEnum.Step;
 const limit = 10000;
 const canvasSize = 5000;
 const cellSize = 160;
-const center = { x: canvasSize / 2, y: canvasSize / 2 };
 const nodeRadius = 40;
+const center = { x: canvasSize / 2, y: canvasSize / 2 };
 
 const pairHash = (a, b) => {
   const s = [a, b].sort().join('|');
@@ -44,11 +44,10 @@ const countCrossings = (layers, graph, relations) => {
     });
   });
 
-  // Helper function to check if two line segments intersect
   const segmentsIntersect = (p1, p2, q1, q2) => {
     const orientation = (p, q, r) => {
       const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
-      return val === 0 ? 0 : val > 0 ? 1 : 2; // 0: collinear, 1: clockwise, 2: counterclockwise
+      return val === 0 ? 0 : val > 0 ? 1 : 2;
     };
 
     const onSegment = (p, q, r) => {
@@ -61,10 +60,8 @@ const countCrossings = (layers, graph, relations) => {
     const o3 = orientation(q1, q2, p1);
     const o4 = orientation(q1, q2, p2);
 
-    // General case: different orientations and segments intersect
     if (o1 !== o2 && o3 !== o4) return true;
 
-    // Special cases: collinear segments
     if (o1 === 0 && onSegment(p1, q1, p2)) return true;
     if (o2 === 0 && onSegment(p1, q2, p2)) return true;
     if (o3 === 0 && onSegment(q1, p1, q2)) return true;
@@ -78,52 +75,45 @@ const countCrossings = (layers, graph, relations) => {
       const edge1 = relations[i];
       const edge2 = relations[j];
 
-      // Ensure nodes exist in the position map
       const p1 = nodeToPos.get(edge1.from);
       const p2 = nodeToPos.get(edge1.to);
       const q1 = nodeToPos.get(edge2.from);
       const q2 = nodeToPos.get(edge2.to);
       if (!p1 || !p2 || !q1 || !q2) continue;
 
-      // Skip if edges share a node
       if (edge1.from === edge2.from || edge1.from === edge2.to ||
         edge1.to === edge2.from || edge1.to === edge2.to) continue;
 
-      // Assign coordinates for geometric intersection test
       const p1Coord = { x: p1.x, y: p1.depth };
       const p2Coord = { x: p2.x, y: p2.depth };
       const q1Coord = { x: q1.x, y: q1.depth };
       const q2Coord = { x: q2.x, y: q2.depth };
 
-      // Handle edge directions
       let u1 = p1, v1 = p2;
       if (edge1.type === Step.parallel && p1.depth === p2.depth) {
         [u1, v1] = p1.x <= p2.x ? [p1, p2] : [p2, p1];
-      } else if (p1.depth > p2.depth) {
-        [u1, v1] = [p2, p1]; // Ensure lower depth to higher depth
+      } else if (p1.depth > p2.depth && edge1.type !== Step.parallel) {
+        [u1, v1] = [p2, p1];
       }
 
       let u2 = q1, v2 = q2;
       if (edge2.type === Step.parallel && q1.depth === q2.depth) {
         [u2, v2] = q1.x <= q2.x ? [q1, q2] : [q2, q1];
-      } else if (q1.depth > q2.depth) {
+      } else if (q1.depth > q2.depth && edge2.type !== Step.parallel) {
         [u2, v2] = [q2, q1];
       }
 
-      // Same-depth crossings (only for parallel edges within the same layer)
+      const u1Coord = { x: u1.x, y: u1.depth };
+      const v1Coord = { x: v1.x, y: v1.depth };
+      const u2Coord = { x: u2.x, y: u2.depth };
+      const v2Coord = { x: v2.x, y: v2.depth };
+
       if (u1.depth === v1.depth && u2.depth === v2.depth && u1.depth === u2.depth) {
         if ((u1.x < u2.x && v1.x > v2.x) || (u1.x > u2.x && v1.x < v2.x)) {
           sameDepthCrossings++;
         }
-      }
-      // Different-depth crossings using geometric intersection
-      else {
-        if (segmentsIntersect(
-          { x: u1.x, y: u1.depth },
-          { x: v1.x, y: v1.depth },
-          { x: u2.x, y: u2.depth },
-          { x: v2.x, y: v2.depth }
-        )) {
+      } else {
+        if (segmentsIntersect(u1Coord, v1Coord, u2Coord, v2Coord)) {
           diffDepthCrossings++;
         }
       }
@@ -141,6 +131,7 @@ export default function GraphNet({ focus, relations }) {
   const [hoveredNode, setHoveredNode] = useState(null);
   const [focusMode, setFocusMode] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [minCrossings, setMinCrossings] = useState(Infinity);
   const containerRef = useRef(null);
   const optimizedLayersRef = useRef(null);
 
@@ -180,18 +171,20 @@ export default function GraphNet({ focus, relations }) {
   useEffect(() => {
     if (!graph.size) return;
 
-    // Check if we have a cached optimized configuration with zero crossings
+    // Check if optimized layers exist and have zero crossings
     if (optimizedLayersRef.current) {
       const { sameDepthCrossings, diffDepthCrossings } = countCrossings(optimizedLayersRef.current, graph, relations);
-      if (sameDepthCrossings === 0 && diffDepthCrossings === 0) {
+      const totalCrossings = sameDepthCrossings + diffDepthCrossings;
+      if (totalCrossings === 0) {
         const pos = new Map();
         optimizedLayersRef.current.forEach((layer, i) => {
           const half = Math.floor(layer.length / 2);
           layer.forEach((node, idx) => {
-            pos.set(node, { x: idx - half, y: depths[i] });
+            pos.set(node, { x: idx - half, y: i });
           });
         });
         setPositions(pos);
+        setMinCrossings(0);
         return;
       }
     }
@@ -220,7 +213,38 @@ export default function GraphNet({ focus, relations }) {
     const depths = Array.from(layerMap.keys()).sort((a, b) => a - b);
     const initialLayers = depths.map(d => layerMap.get(d).slice());
 
-    const layerPermutations = initialLayers.map(layer => permute(layer));
+    const sortLayerByDegree = (layer) => {
+      return layer.sort((a, b) => {
+        const aDeg = (graph.get(a)?.[Step.next]?.size || 0) +
+          (graph.get(a)?.[Step.prev]?.size || 0) +
+          (graph.get(a)?.[Step.parallel]?.size || 0);
+        const bDeg = (graph.get(b)?.[Step.next]?.size || 0) +
+          (graph.get(b)?.[Step.prev]?.size || 0) +
+          (graph.get(b)?.[Step.parallel]?.size || 0);
+        return bDeg - aDeg;
+      });
+    };
+
+    initialLayers.forEach(layer => sortLayerByDegree(layer));
+
+    const generatePermutations = (layer) => {
+      const perms = permute(layer);
+      if (perms.length > limit) {
+        const sortedPerms = [];
+        for (let i = 0; i < limit; i++) {
+          const perm = [...layer];
+          for (let j = perm.length - 1; j > 0; j--) {
+            const k = Math.floor(Math.random() * (j + 1));
+            [perm[j], perm[k]] = [perm[k], perm[j]];
+          }
+          sortedPerms.push(perm);
+        }
+        return sortedPerms;
+      }
+      return perms;
+    };
+
+    const layerPermutations = initialLayers.map(layer => generatePermutations(layer));
 
     const cartesianProductLimited = (arrays) => {
       const total = arrays.reduce((acc, curr) => acc * curr.length, 1);
@@ -239,31 +263,35 @@ export default function GraphNet({ focus, relations }) {
       return result;
     };
 
-    let minCrossings = Infinity;
+    let minCrossingsLocal = Infinity;
     let bestLayers = initialLayers;
+    let bestPositions = new Map();
 
     const allConfigs = cartesianProductLimited(layerPermutations);
     for (const config of allConfigs) {
       const { sameDepthCrossings, diffDepthCrossings } = countCrossings(config, graph, relations);
       const totalCrossings = sameDepthCrossings + diffDepthCrossings;
-      if (totalCrossings < minCrossings) {
-        minCrossings = totalCrossings;
-        bestLayers = config.map(layer => [...layer]); // Deep copy
-        if (sameDepthCrossings === 0 && diffDepthCrossings === 0) {
-          optimizedLayersRef.current = bestLayers;
-          break; // Early stop
+      if (totalCrossings < minCrossingsLocal) {
+        minCrossingsLocal = totalCrossings;
+        bestLayers = config.map(layer => [...layer]);
+        // Compute positions immediately to ensure consistency
+        const pos = new Map();
+        bestLayers.forEach((layer, i) => {
+          const half = Math.floor(layer.length / 2);
+          layer.forEach((node, idx) => {
+            pos.set(node, { x: idx - half, y: i });
+          });
+        });
+        bestPositions = pos;
+        optimizedLayersRef.current = bestLayers;
+        if (totalCrossings === 0) {
+          break; // Early stopping when zero crossings are found
         }
       }
     }
 
-    const pos = new Map();
-    bestLayers.forEach((layer, i) => {
-      const half = Math.floor(layer.length / 2);
-      layer.forEach((node, idx) => {
-        pos.set(node, { x: idx - half, y: depths[i] });
-      });
-    });
-    setPositions(pos);
+    setPositions(bestPositions);
+    setMinCrossings(minCrossingsLocal);
   }, [graph, focus, relations]);
 
   useEffect(() => {
@@ -276,7 +304,7 @@ export default function GraphNet({ focus, relations }) {
     });
   }, [positions, focus, scale]);
 
-  const handleWheel = useCallback((e) => {
+  const handleWheel = (e) => {
     const rect = containerRef.current.getBoundingClientRect();
     const mouse = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const ns = Math.max(0.2, Math.min(2, scale + (e.deltaY > 0 ? -0.1 : 0.1)));
@@ -287,9 +315,9 @@ export default function GraphNet({ focus, relations }) {
       y: mouse.y - r * (mouse.y - offset.y),
     });
     setScale(ns);
-  }, [scale, offset]);
+  };
 
-  const handleMouseDown = useCallback((e) => {
+  const handleMouseDown = (e) => {
     e.preventDefault();
     const start = { x: e.clientX, y: e.clientY };
     const so = { ...offset };
@@ -301,9 +329,9 @@ export default function GraphNet({ focus, relations }) {
     };
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
-  }, [offset]);
+  };
 
-  const getVisibleNodes = useCallback(() => {
+  const getVisibleNodes = () => {
     if (!focusMode || !hoveredNode) return null;
     const visible = new Set([hoveredNode]);
     const gNode = graph.get(hoveredNode);
@@ -313,7 +341,7 @@ export default function GraphNet({ focus, relations }) {
       gNode[Step.parallel].forEach(n => visible.add(n));
     }
     return visible;
-  }, [graph, hoveredNode, focusMode]);
+  };
 
   const nodes = useMemo(() => {
     const visibleNodes = getVisibleNodes();
@@ -342,9 +370,9 @@ export default function GraphNet({ focus, relations }) {
           <div
             key={n}
             className={`absolute w-20 h-20 rounded-full border-2 flex items-center justify-center font-semibold text-sm
-                      ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
-                      ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
-                      backdrop-blur-sm`}
+                              ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
+                              ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
+                              backdrop-blur-sm`}
             style={{
               left: `${center.x + x * cellSize - nodeRadius}px`,
               top: `${center.y - y * cellSize - nodeRadius}px`,
@@ -356,7 +384,7 @@ export default function GraphNet({ focus, relations }) {
           </div>
         );
       });
-  }, [positions, focus, hoveredNode, getVisibleNodes, isDarkMode]);
+  }, [positions, focus, hoveredNode, isDarkMode]);
 
   const lines = useMemo(() => {
     const segs = [];
@@ -452,15 +480,15 @@ export default function GraphNet({ focus, relations }) {
     <div
       ref={containerRef}
       className={`relative w-full h-screen overflow-hidden transition-colors duration-300
-                ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
+                        ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
     >
       <div className="absolute top-4 left-4 z-30 flex space-x-2">
         <button
           className={`p-2 rounded-lg transition-all duration-200
-                    ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-                    border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                            ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setFocusMode(prev => !prev)}
         >
           {focusMode ? (
@@ -475,8 +503,8 @@ export default function GraphNet({ focus, relations }) {
         </button>
         <button
           className={`p-2 rounded-lg transition-all duration-200
-                    ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-                    border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                            ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setIsDarkMode(prev => !prev)}
         >
           {isDarkMode ? (
@@ -492,8 +520,8 @@ export default function GraphNet({ focus, relations }) {
       </div>
 
       <div className={`absolute bottom-4 left-4 z-30 p-3 rounded-lg shadow-lg transition-all duration-200
-                ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
-                border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+                        ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
+                        border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
         <div className="flex items-center space-x-2">
           <svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={isDarkMode ? '#34d399' : '#16a34a'} strokeWidth="2" markerEnd="url(#arrow-legend-next)" /></svg>
           <span>Next</span>
@@ -505,6 +533,9 @@ export default function GraphNet({ focus, relations }) {
         <div className="flex items-center space-x-2">
           <svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={isDarkMode ? '#60a5fa' : '#2563eb'} strokeWidth="2" strokeDasharray="3 3" /></svg>
           <span>Parallel</span>
+        </div>
+        <div className="flex items-center space-x-2 mt-2">
+          <span>Edge Crossings: {minCrossings}</span>
         </div>
       </div>
 
