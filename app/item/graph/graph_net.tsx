@@ -1,11 +1,11 @@
 "use client"
 
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { MagnifyingGlassIcon, ArrowsPointingOutIcon, SunIcon, MoonIcon } from '@heroicons/react/24/solid';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { MagnifyingGlassIcon, SunIcon, MoonIcon } from '@heroicons/react/24/solid';
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
-const limit = 5000;
+const limit = 200; // Reduced limit as requested
 const canvasSize = 5000;
 const cellSize = 160;
 const nodeRadius = 40;
@@ -16,6 +16,12 @@ const pairHash = (a, b) => {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
   return h;
+};
+
+const factorial = (n) => {
+  let f = 1;
+  for (let i = 2; i <= n; i++) f *= i;
+  return f;
 };
 
 const permute = (arr) => {
@@ -32,6 +38,98 @@ const permute = (arr) => {
   };
   generate(arr);
   return results;
+};
+
+const generatePermutations = (layer, graph, relations, depth) => {
+  const n = layer.length;
+  if (factorial(n) <= limit) {
+    return permute(layer);
+  }
+
+  // Probability-based sampling using edge weights
+  const results = [layer.slice()];
+  const edgeWeights = new Map();
+  relations.forEach(({ from, to, type }) => {
+    if ((type === Step.next && depth > 0) || (type === Step.prev && depth < 0)) {
+      const key = `${from}|${to}`;
+      edgeWeights.set(key, (edgeWeights.get(key) || 0) + 1);
+    }
+  });
+
+  const getPermScore = (perm) => {
+    let score = 0;
+    for (let i = 0; i < perm.length - 1; i++) {
+      for (let j = i + 1; j < perm.length; j++) {
+        const key1 = `${perm[i]}|${perm[j]}`;
+        const key2 = `${perm[j]}|${perm[i]}`;
+        score += (edgeWeights.get(key1) || 0) + (edgeWeights.get(key2) || 0);
+      }
+    }
+    return score;
+  };
+
+  for (let i = 1; i < limit; i++) {
+    const perm = layer.slice();
+    // Use Metropolis-Hastings-inspired sampling
+    for (let j = n - 1; j > 0; j--) {
+      const k = Math.floor(Math.random() * (j + 1));
+      const tempPerm = [...perm];
+      [tempPerm[j], tempPerm[k]] = [tempPerm[k], tempPerm[j]];
+      const currScore = getPermScore(perm);
+      const newScore = getPermScore(tempPerm);
+      const acceptanceProb = Math.min(1, Math.exp((currScore - newScore) / 10));
+      if (Math.random() < acceptanceProb) {
+        perm[j] = tempPerm[j];
+        perm[k] = tempPerm[k];
+      }
+    }
+    results.push(perm);
+  }
+  return results;
+};
+
+const generateMultiLayerPermutations = (layers, indices, graph, relations, limit) => {
+  const perms = [];
+  const layerPerms = indices.map(i => generatePermutations(layers[i], graph, relations, i - Math.floor(layers.length / 2)));
+
+  // Probabilistic combination using edge-based weights
+  const getCombinationScore = (combination) => {
+    let score = 0;
+    const tempLayers = layers.map(l => l.slice());
+    indices.forEach((idx, i) => {
+      tempLayers[idx] = combination[i];
+    });
+    const { sameDepthCrossings, diffDepthCrossings } = countCrossings(tempLayers, graph, relations);
+    return -(sameDepthCrossings + diffDepthCrossings); // Negative for minimization
+  };
+
+  if (layerPerms.reduce((acc, p) => acc * p.length, 1) <= limit) {
+    const combine = (current, layerIdx) => {
+      if (layerIdx === indices.length) {
+        perms.push(current);
+        return;
+      }
+      for (const perm of layerPerms[layerIdx]) {
+        combine([...current, perm], layerIdx + 1);
+      }
+    };
+    combine([], 0);
+  } else {
+    const scores = new Map();
+    for (let i = 0; i < limit; i++) {
+      const combination = indices.map(idx => {
+        const perms = layerPerms[indices.indexOf(idx)];
+        return perms[Math.floor(Math.random() * perms.length)];
+      });
+      const score = getCombinationScore(combination);
+      scores.set(combination, score);
+      perms.push(combination);
+    }
+    // Sort by score and keep top `limit` permutations
+    perms.sort((a, b) => scores.get(b) - scores.get(a));
+    perms.splice(limit);
+  }
+  return perms;
 };
 
 const countCrossings = (layers, graph, relations) => {
@@ -109,13 +207,11 @@ const countCrossings = (layers, graph, relations) => {
       const v2Coord = { x: v2.x, y: v2.depth };
 
       if (u1.depth === v1.depth && u2.depth === v2.depth && u1.depth === u2.depth) {
-        // For parallel edges in the same depth, check if endpoints are interleaved
         const positions = [u1.x, v1.x, u2.x, v2.x].sort((a, b) => a - b);
         const u1Idx = positions.indexOf(u1.x);
         const v1Idx = positions.indexOf(v1.x);
         const u2Idx = positions.indexOf(u2.x);
         const v2Idx = positions.indexOf(v2.x);
-        // Non-crossing if endpoints are adjacent (e.g., u1,v1,u2,v2 or u2,v2,u1,v1)
         const isNonCrossing = (Math.abs(u1Idx - v1Idx) === 1 && Math.abs(u2Idx - v2Idx) === 1) &&
           (Math.max(u1Idx, v1Idx) < Math.min(u2Idx, v2Idx) ||
             Math.max(u2Idx, v2Idx) < Math.min(u1Idx, v1Idx));
@@ -198,6 +294,7 @@ export default function GraphNet({ focus, relations }) {
       }
     }
 
+    // Assign nodes to layers based on depth from focus
     const levels = new Map();
     const visited = new Set();
     const queue = [[focus, 0]];
@@ -220,86 +317,84 @@ export default function GraphNet({ focus, relations }) {
     }
 
     const depths = Array.from(layerMap.keys()).sort((a, b) => a - b);
-    const initialLayers = depths.map(d => layerMap.get(d).slice());
+    let layers = depths.map(d => layerMap.get(d).slice());
 
-    const sortLayerByDegree = (layer) => {
-      return layer.sort((a, b) => {
-        const aDeg = (graph.get(a)?.[Step.next]?.size || 0) +
-          (graph.get(a)?.[Step.prev]?.size || 0) +
-          (graph.get(a)?.[Step.parallel]?.size || 0);
-        const bDeg = (graph.get(b)?.[Step.next]?.size || 0) +
-          (graph.get(b)?.[Step.prev]?.size || 0) +
-          (graph.get(b)?.[Step.parallel]?.size || 0);
-        return bDeg - aDeg;
-      });
-    };
-
-    initialLayers.forEach(layer => sortLayerByDegree(layer));
-
-    const generatePermutations = (layer) => {
-      const perms = permute(layer);
-      if (perms.length > limit) {
-        const sortedPerms = [];
-        for (let i = 0; i < limit; i++) {
-          const perm = [...layer];
-          for (let j = perm.length - 1; j > 0; j--) {
-            const k = Math.floor(Math.random() * (j + 1));
-            [perm[j], perm[k]] = [perm[k], perm[j]];
-          }
-          sortedPerms.push(perm);
-        }
-        return sortedPerms;
+    // Initialize layers randomly to avoid barycenter-like bias
+    layers.forEach(layer => {
+      for (let i = layer.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [layer[i], layer[j]] = [layer[j], layer[i]];
       }
-      return perms;
-    };
+    });
 
-    const layerPermutations = initialLayers.map(layer => generatePermutations(layer));
-
-    const cartesianProductLimited = (arrays) => {
-      const total = arrays.reduce((acc, curr) => acc * curr.length, 1);
-      if (total <= limit) {
-        return arrays.reduce((acc, curr) => {
-          const res = [];
-          acc.forEach(a => curr.forEach(c => res.push([...a, c])));
-          return res;
-        }, [[]]);
-      }
-      const result = [];
-      for (let i = 0; i < limit; i++) {
-        const config = arrays.map(arr => arr[Math.floor(Math.random() * arr.length)]);
-        result.push(config);
-      }
-      return result;
-    };
-
+    let bestLayers = layers.map(l => l.slice());
     let minCrossingsLocal = Infinity;
-    let bestLayers = initialLayers;
-    let bestPositions = new Map();
+    let { sameDepthCrossings, diffDepthCrossings } = countCrossings(bestLayers, graph, relations);
+    minCrossingsLocal = sameDepthCrossings + diffDepthCrossings;
 
-    const allConfigs = cartesianProductLimited(layerPermutations);
-    for (const config of allConfigs) {
-      const { sameDepthCrossings, diffDepthCrossings } = countCrossings(config, graph, relations);
-      const totalCrossings = sameDepthCrossings + diffDepthCrossings;
-      if (totalCrossings < minCrossingsLocal) {
-        minCrossingsLocal = totalCrossings;
-        bestLayers = config.map(layer => [...layer]);
-        const pos = new Map();
-        bestLayers.forEach((layer, i) => {
-          const half = Math.floor(layer.length / 2);
-          layer.forEach((node, idx) => {
-            pos.set(node, { x: idx - half, y: i });
-          });
-        });
-        bestPositions = pos;
-        optimizedLayersRef.current = bestLayers;
-        if (totalCrossings === 0) {
-          break;
-        }
+    // Probabilistic optimization using Monte Carlo sampling
+    const maxIterations = limit;
+    let temperature = 100;
+    const coolingRate = 0.95;
+
+    for (let iter = 0; iter < maxIterations; iter++) {
+      // Select a random subset of layers to permute (up to 3 for efficiency)
+      const numLayers = Math.min(3, layers.length);
+      const indices = [];
+      while (indices.length < numLayers) {
+        const idx = Math.floor(Math.random() * layers.length);
+        if (!indices.includes(idx)) indices.push(idx);
       }
+
+      const multiPerms = generateMultiLayerPermutations(layers, indices, graph, relations, Math.floor(limit / numLayers));
+      for (const permSet of multiPerms) {
+        const tempLayers = layers.map(l => l.slice());
+        indices.forEach((idx, i) => {
+          tempLayers[idx] = permSet[i].slice();
+        });
+        const { sameDepthCrossings, diffDepthCrossings } = countCrossings(tempLayers, graph, relations);
+        const total = sameDepthCrossings + diffDepthCrossings;
+
+        // Simulated annealing acceptance probability
+        const acceptanceProb = total < minCrossingsLocal
+          ? 1
+          : Math.exp((minCrossingsLocal - total) / temperature);
+        if (total < minCrossingsLocal || Math.random() < acceptanceProb) {
+          bestLayers = tempLayers.map(l => l.slice());
+          minCrossingsLocal = total;
+        }
+        if (total === 0) break;
+      }
+      temperature *= coolingRate;
+      if (minCrossingsLocal === 0) break;
     }
 
-    setPositions(bestPositions);
+    // Final single-layer refinement
+    for (let li = 0; li < bestLayers.length; li++) {
+      const perms = generatePermutations(bestLayers[li], graph, relations, li - Math.floor(bestLayers.length / 2));
+      for (const perm of perms) {
+        const tempLayers = [...bestLayers.slice(0, li), perm, ...bestLayers.slice(li + 1)];
+        const { sameDepthCrossings, diffDepthCrossings } = countCrossings(tempLayers, graph, relations);
+        const total = sameDepthCrossings + diffDepthCrossings;
+        if (total < minCrossingsLocal) {
+          bestLayers[li] = perm.slice();
+          minCrossingsLocal = total;
+        }
+        if (total === 0) break;
+      }
+      if (minCrossingsLocal === 0) break;
+    }
+
+    const pos = new Map();
+    bestLayers.forEach((layer, i) => {
+      const half = Math.floor(layer.length / 2);
+      layer.forEach((node, idx) => {
+        pos.set(node, { x: idx - half, y: i });
+      });
+    });
+    setPositions(pos);
     setMinCrossings(minCrossingsLocal);
+    optimizedLayersRef.current = bestLayers;
   }, [graph, focus, relations]);
 
   useEffect(() => {
@@ -378,9 +473,9 @@ export default function GraphNet({ focus, relations }) {
           <div
             key={n}
             className={`absolute w-20 h-20 rounded-full border-2 flex items-center justify-center font-semibold text-sm
-                                  ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
-                                  ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
-                                  backdrop-blur-sm`}
+                       ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
+                       ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
+                       backdrop-blur-sm`}
             style={{
               left: `${center.x + x * cellSize - nodeRadius}px`,
               top: `${center.y - y * cellSize - nodeRadius}px`,
@@ -435,7 +530,7 @@ export default function GraphNet({ focus, relations }) {
               ([_, pos]) => pos.y === fromPos.y && pos.x > minX && pos.x < maxX
             );
             if (hasNodeBetween) {
-              bendX = dir * Math.max(cellSize * 0.6, nodeRadius * 2 + 16);
+              bendY = dir * Math.max(cellSize * 0.6, nodeRadius * 2 + 16);
             }
           } else if (sameCol) {
             bendX = dir * 40;
@@ -488,15 +583,15 @@ export default function GraphNet({ focus, relations }) {
     <div
       ref={containerRef}
       className={`relative w-full h-screen overflow-hidden transition-colors duration-300
-                            ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
+                 ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
     >
       <div className="absolute top-4 left-4 z-30 flex space-x-2">
         <button
           className={`p-2 rounded-lg transition-all duration-200
-                                ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-                                border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                     ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                     border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setFocusMode(prev => !prev)}
         >
           {focusMode ? (
@@ -511,25 +606,21 @@ export default function GraphNet({ focus, relations }) {
         </button>
         <button
           className={`p-2 rounded-lg transition-all duration-200
-                                ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-                                border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                     ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                     border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setIsDarkMode(prev => !prev)}
         >
           {isDarkMode ? (
-            <svg className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
+            <SunIcon className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} />
           ) : (
-            <svg className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} fill="currentColor" viewBox="0 0 24 24">
-              <path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-            </svg>
+            <MoonIcon className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} />
           )}
         </button>
       </div>
 
       <div className={`absolute bottom-4 left-4 z-30 p-3 rounded-lg shadow-lg transition-all duration-200
-                            ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
-                            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+                       ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
+                       border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
         <div className="flex items-center space-x-2">
           <svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={isDarkMode ? '#34d399' : '#16a34a'} strokeWidth="2" markerEnd="url(#arrow-legend-next)" /></svg>
           <span>Next</span>
