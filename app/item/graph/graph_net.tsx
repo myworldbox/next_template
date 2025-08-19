@@ -5,6 +5,7 @@ import { MagnifyingGlassIcon, ArrowsPointingOutIcon, SunIcon, MoonIcon } from '@
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
+const limit = 10000;
 const canvasSize = 5000;
 const cellSize = 160;
 const center = { x: canvasSize / 2, y: canvasSize / 2 };
@@ -17,7 +18,122 @@ const pairHash = (a, b) => {
   return h;
 };
 
-export default function GraphNet({ focus, relations }: { focus: string; relations: Array<{ from: string; to: string; type: CoreEnum.Step }> }) {
+const permute = (arr) => {
+  const results = [];
+  const generate = (arr, m = []) => {
+    if (arr.length === 0) results.push(m);
+    else {
+      for (let i = 0; i < arr.length; i++) {
+        const curr = arr.slice();
+        const next = curr.splice(i, 1);
+        generate(curr, m.concat(next));
+      }
+    }
+  };
+  generate(arr);
+  return results;
+};
+
+const countCrossings = (layers, graph, relations) => {
+  let sameDepthCrossings = 0;
+  let diffDepthCrossings = 0;
+  const nodeToPos = new Map();
+  layers.forEach((layer, depth) => {
+    layer.forEach((node, idx) => {
+      nodeToPos.set(node, { depth, x: idx });
+    });
+  });
+
+  // Helper function to check if two line segments intersect
+  const segmentsIntersect = (p1, p2, q1, q2) => {
+    const orientation = (p, q, r) => {
+      const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+      return val === 0 ? 0 : val > 0 ? 1 : 2; // 0: collinear, 1: clockwise, 2: counterclockwise
+    };
+
+    const onSegment = (p, q, r) => {
+      return q.x <= Math.max(p.x, r.x) && q.x >= Math.min(p.x, r.x) &&
+        q.y <= Math.max(p.y, r.y) && q.y >= Math.min(p.y, r.y);
+    };
+
+    const o1 = orientation(p1, p2, q1);
+    const o2 = orientation(p1, p2, q2);
+    const o3 = orientation(q1, q2, p1);
+    const o4 = orientation(q1, q2, p2);
+
+    // General case: different orientations and segments intersect
+    if (o1 !== o2 && o3 !== o4) return true;
+
+    // Special cases: collinear segments
+    if (o1 === 0 && onSegment(p1, q1, p2)) return true;
+    if (o2 === 0 && onSegment(p1, q2, p2)) return true;
+    if (o3 === 0 && onSegment(q1, p1, q2)) return true;
+    if (o4 === 0 && onSegment(q1, p2, q2)) return true;
+
+    return false;
+  };
+
+  for (let i = 0; i < relations.length; i++) {
+    for (let j = i + 1; j < relations.length; j++) {
+      const edge1 = relations[i];
+      const edge2 = relations[j];
+
+      // Ensure nodes exist in the position map
+      const p1 = nodeToPos.get(edge1.from);
+      const p2 = nodeToPos.get(edge1.to);
+      const q1 = nodeToPos.get(edge2.from);
+      const q2 = nodeToPos.get(edge2.to);
+      if (!p1 || !p2 || !q1 || !q2) continue;
+
+      // Skip if edges share a node
+      if (edge1.from === edge2.from || edge1.from === edge2.to ||
+        edge1.to === edge2.from || edge1.to === edge2.to) continue;
+
+      // Assign coordinates for geometric intersection test
+      const p1Coord = { x: p1.x, y: p1.depth };
+      const p2Coord = { x: p2.x, y: p2.depth };
+      const q1Coord = { x: q1.x, y: q1.depth };
+      const q2Coord = { x: q2.x, y: q2.depth };
+
+      // Handle edge directions
+      let u1 = p1, v1 = p2;
+      if (edge1.type === Step.parallel && p1.depth === p2.depth) {
+        [u1, v1] = p1.x <= p2.x ? [p1, p2] : [p2, p1];
+      } else if (p1.depth > p2.depth) {
+        [u1, v1] = [p2, p1]; // Ensure lower depth to higher depth
+      }
+
+      let u2 = q1, v2 = q2;
+      if (edge2.type === Step.parallel && q1.depth === q2.depth) {
+        [u2, v2] = q1.x <= q2.x ? [q1, q2] : [q2, q1];
+      } else if (q1.depth > q2.depth) {
+        [u2, v2] = [q2, q1];
+      }
+
+      // Same-depth crossings (only for parallel edges within the same layer)
+      if (u1.depth === v1.depth && u2.depth === v2.depth && u1.depth === u2.depth) {
+        if ((u1.x < u2.x && v1.x > v2.x) || (u1.x > u2.x && v1.x < v2.x)) {
+          sameDepthCrossings++;
+        }
+      }
+      // Different-depth crossings using geometric intersection
+      else {
+        if (segmentsIntersect(
+          { x: u1.x, y: u1.depth },
+          { x: v1.x, y: v1.depth },
+          { x: u2.x, y: u2.depth },
+          { x: v2.x, y: v2.depth }
+        )) {
+          diffDepthCrossings++;
+        }
+      }
+    }
+  }
+
+  return { sameDepthCrossings, diffDepthCrossings };
+};
+
+export default function GraphNet({ focus, relations }) {
   const [positions, setPositions] = useState(new Map());
   const [graph, setGraph] = useState(new Map());
   const [scale, setScale] = useState(1);
@@ -26,24 +142,18 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
   const [focusMode, setFocusMode] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const containerRef = useRef(null);
+  const optimizedLayersRef = useRef(null);
 
-  // Prevent default page scrolling on wheel events over the container
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const preventScroll = (e) => {
-      e.preventDefault();
-    };
-
+    const preventScroll = (e) => e.preventDefault();
     container.addEventListener('wheel', preventScroll, { passive: false });
 
-    return () => {
-      container.removeEventListener('wheel', preventScroll);
-    };
+    return () => container.removeEventListener('wheel', preventScroll);
   }, []);
 
-  // Build graph adjacency structure
   useEffect(() => {
     const g = new Map();
     for (const { from, to, type } of relations) {
@@ -67,12 +177,27 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
     setGraph(g);
   }, [relations]);
 
-  // Compute node positions using layered layout
   useEffect(() => {
     if (!graph.size) return;
-    const pos = new Map();
-    const visited = new Set();
+
+    // Check if we have a cached optimized configuration with zero crossings
+    if (optimizedLayersRef.current) {
+      const { sameDepthCrossings, diffDepthCrossings } = countCrossings(optimizedLayersRef.current, graph, relations);
+      if (sameDepthCrossings === 0 && diffDepthCrossings === 0) {
+        const pos = new Map();
+        optimizedLayersRef.current.forEach((layer, i) => {
+          const half = Math.floor(layer.length / 2);
+          layer.forEach((node, idx) => {
+            pos.set(node, { x: idx - half, y: depths[i] });
+          });
+        });
+        setPositions(pos);
+        return;
+      }
+    }
+
     const levels = new Map();
+    const visited = new Set();
     const queue = [[focus, 0]];
     while (queue.length) {
       const [node, depth] = queue.shift();
@@ -93,70 +218,61 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
     }
 
     const depths = Array.from(layerMap.keys()).sort((a, b) => a - b);
-    let layers = depths.map(d => layerMap.get(d).slice());
+    const initialLayers = depths.map(d => layerMap.get(d).slice());
 
-    const maxIter = 10;
-    for (let iter = 0; iter < maxIter; iter++) {
-      // Down sweep
-      for (let i = 1; i < depths.length; i++) {
-        const prevLayer = layers[i - 1];
-        const currLayer = layers[i];
-        const baryList = currLayer.map((node, currIdx) => {
-          const neighbors = [...(graph.get(node)?.[Step.prev] || []), ...(graph.get(node)?.[Step.next] || [])];
-          const parents = neighbors.filter(p => levels.get(p) === depths[i - 1]);
-          let sum = 0;
-          let count = 0;
-          parents.forEach(p => {
-            sum += prevLayer.indexOf(p);
-            count++;
-          });
-          return { node, bary: count ? sum / count : currIdx, idx: currIdx };
-        });
-        baryList.sort((a, b) => a.bary - b.bary || a.idx - b.idx);
-        layers[i] = baryList.map(({ node }) => node);
+    const layerPermutations = initialLayers.map(layer => permute(layer));
+
+    const cartesianProductLimited = (arrays) => {
+      const total = arrays.reduce((acc, curr) => acc * curr.length, 1);
+      if (total <= limit) {
+        return arrays.reduce((acc, curr) => {
+          const res = [];
+          acc.forEach(a => curr.forEach(c => res.push([...a, c])));
+          return res;
+        }, [[]]);
       }
+      const result = [];
+      for (let i = 0; i < limit; i++) {
+        const config = arrays.map(arr => arr[Math.floor(Math.random() * arr.length)]);
+        result.push(config);
+      }
+      return result;
+    };
 
-      // Up sweep
-      for (let i = depths.length - 2; i >= 0; i--) {
-        const nextLayer = layers[i + 1];
-        const currLayer = layers[i];
-        const baryList = currLayer.map((node, currIdx) => {
-          const neighbors = [...(graph.get(node)?.[Step.prev] || []), ...(graph.get(node)?.[Step.next] || [])];
-          const children = neighbors.filter(c => levels.get(c) === depths[i + 1]);
-          let sum = 0;
-          let count = 0;
-          children.forEach(c => {
-            sum += nextLayer.indexOf(c);
-            count++;
-          });
-          return { node, bary: count ? sum / count : currIdx, idx: currIdx };
-        });
-        baryList.sort((a, b) => a.bary - b.bary || a.idx - b.idx);
-        layers[i] = baryList.map(({ node }) => node);
+    let minCrossings = Infinity;
+    let bestLayers = initialLayers;
+
+    const allConfigs = cartesianProductLimited(layerPermutations);
+    for (const config of allConfigs) {
+      const { sameDepthCrossings, diffDepthCrossings } = countCrossings(config, graph, relations);
+      const totalCrossings = sameDepthCrossings + diffDepthCrossings;
+      if (totalCrossings < minCrossings) {
+        minCrossings = totalCrossings;
+        bestLayers = config.map(layer => [...layer]); // Deep copy
+        if (sameDepthCrossings === 0 && diffDepthCrossings === 0) {
+          optimizedLayersRef.current = bestLayers;
+          break; // Early stop
+        }
       }
     }
 
-    for (let i = 0; i < depths.length; i++) {
-      const nodesAtLevel = layers[i];
-      const half = Math.floor(nodesAtLevel.length / 2);
-      nodesAtLevel.forEach((node, idx) => {
-        pos.set(node, {
-          x: idx - half,
-          y: depths[i],
-        });
+    const pos = new Map();
+    bestLayers.forEach((layer, i) => {
+      const half = Math.floor(layer.length / 2);
+      layer.forEach((node, idx) => {
+        pos.set(node, { x: idx - half, y: depths[i] });
       });
-    }
+    });
     setPositions(pos);
-  }, [graph, focus]);
+  }, [graph, focus, relations]);
 
-  // Center view on focus node (UPDATED)
   useEffect(() => {
     if (!containerRef.current || !positions.has(focus)) return;
     const rect = containerRef.current.getBoundingClientRect();
     const { x, y } = positions.get(focus);
     setOffset({
       x: rect.width / 2 - scale * (center.x + x * cellSize),
-      y: rect.height / 2 - scale * (center.y - y * cellSize), // MINUS instead of PLUS
+      y: rect.height / 2 - scale * (center.y - y * cellSize),
     });
   }, [positions, focus, scale]);
 
@@ -201,7 +317,6 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
 
   const nodes = useMemo(() => {
     const visibleNodes = getVisibleNodes();
-
     return [...positions.entries()]
       .filter(([n]) => !visibleNodes || visibleNodes.has(n))
       .map(([n, { x, y }]) => {
@@ -227,12 +342,12 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
           <div
             key={n}
             className={`absolute w-20 h-20 rounded-full border-2 flex items-center justify-center font-semibold text-sm
-              ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
-              ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
-              backdrop-blur-sm`}
+                      ${bgColor} ${borderColor} ${zIndex} transition-all duration-300 ease-in-out transform hover:scale-110
+                      ${isDarkMode ? 'text-white shadow-lg shadow-black/30' : 'text-gray-900 shadow-lg shadow-gray-400/30'}
+                      backdrop-blur-sm`}
             style={{
               left: `${center.x + x * cellSize - nodeRadius}px`,
-              top: `${center.y - y * cellSize - nodeRadius}px`, // MINUS instead of PLUS
+              top: `${center.y - y * cellSize - nodeRadius}px`,
             }}
             onMouseEnter={() => setHoveredNode(n)}
             onMouseLeave={() => setHoveredNode(null)}
@@ -259,9 +374,9 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
       const fromPos = positions.get(from);
       const toPos = positions.get(to);
       const fromXpx = center.x + fromPos.x * cellSize;
-      const fromYpx = center.y - fromPos.y * cellSize; // MINUS
+      const fromYpx = center.y - fromPos.y * cellSize;
       const toXpx = center.x + toPos.x * cellSize;
-      const toYpx = center.y - toPos.y * cellSize; // MINUS
+      const toYpx = center.y - toPos.y * cellSize;
 
       const drawCubic = (color, key, markerEnd, dashArray) => {
         const midY = (fromYpx + toYpx) / 2;
@@ -337,62 +452,60 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
     <div
       ref={containerRef}
       className={`relative w-full h-screen overflow-hidden transition-colors duration-300
-        ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
+                ${isDarkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-gray-100 to-gray-200'}`}
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
     >
-      {/* Toggle Buttons */}
       <div className="absolute top-4 left-4 z-30 flex space-x-2">
         <button
           className={`p-2 rounded-lg transition-all duration-200
-            ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                    ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                    border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setFocusMode(prev => !prev)}
         >
           {focusMode ? (
-            <ArrowsPointingOutIcon className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} />
+            <svg className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} fill="currentColor" viewBox="0 0 24 24">
+              <path d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm10 0h6v6h-6v-6z" />
+            </svg>
           ) : (
-            <MagnifyingGlassIcon className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} />
+            <svg className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} fill="currentColor" viewBox="0 0 24 24">
+              <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+            </svg>
           )}
         </button>
         <button
           className={`p-2 rounded-lg transition-all duration-200
-            ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
-            border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
+                    ${isDarkMode ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-900 hover:bg-gray-100'}
+                    border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'} shadow-lg`}
           onClick={() => setIsDarkMode(prev => !prev)}
         >
           {isDarkMode ? (
-            <SunIcon className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} />
+            <svg className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
           ) : (
-            <MoonIcon className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} />
+            <svg className={`h-5 w-5 ${isDarkMode ? 'text-white' : 'text-gray-900'}`} fill="currentColor" viewBox="0 0 24 24">
+              <path d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+            </svg>
           )}
         </button>
       </div>
 
-      {/* Legend */}
       <div className={`absolute bottom-4 left-4 z-30 p-3 rounded-lg shadow-lg transition-all duration-200
-        ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
-        border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+                ${isDarkMode ? 'bg-gray-800/90 text-white' : 'bg-white/90 text-gray-900'}
+                border ${isDarkMode ? 'border-gray-600' : 'border-gray-300'}`}>
         <div className="flex items-center space-x-2">
           <svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={isDarkMode ? '#34d399' : '#16a34a'} strokeWidth="2" markerEnd="url(#arrow-legend-next)" /></svg>
           <span>Next</span>
         </div>
         <div className="flex items-center space-x-2">
           <svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={isDarkMode ? '#f87171' : '#dc2626'} strokeWidth="2" markerEnd="url(#arrow-legend-prev)" /></svg>
-          <span>prev</span>
+          <span>Prev</span>
         </div>
         <div className="flex items-center space-x-2">
           <svg width="20" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke={isDarkMode ? '#60a5fa' : '#2563eb'} strokeWidth="2" strokeDasharray="3 3" /></svg>
           <span>Parallel</span>
         </div>
-        <defs>
-          <marker id="arrow-legend-next" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill={isDarkMode ? '#34d399' : '#16a34a'} />
-          </marker>
-          <marker id="arrow-legend-prev" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill={isDarkMode ? '#f87171' : '#dc2626'} />
-          </marker>
-        </defs>
       </div>
 
       <div
@@ -407,26 +520,16 @@ export default function GraphNet({ focus, relations }: { focus: string; relation
       >
         <svg className="absolute top-0 left-0" width={canvasSize} height={canvasSize}>
           <defs>
-            <marker
-              id="arrow-next"
-              viewBox="0 0 10 10"
-              refX="10"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
+            <marker id="arrow-next" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill={isDarkMode ? '#34d399' : '#16a34a'} />
             </marker>
-            <marker
-              id="arrow-prev"
-              viewBox="0 0 10 10"
-              refX="10"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-            >
+            <marker id="arrow-prev" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={isDarkMode ? '#f87171' : '#dc2626'} />
+            </marker>
+            <marker id="arrow-legend-next" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={isDarkMode ? '#34d399' : '#16a34a'} />
+            </marker>
+            <marker id="arrow-legend-prev" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill={isDarkMode ? '#f87171' : '#dc2626'} />
             </marker>
           </defs>
