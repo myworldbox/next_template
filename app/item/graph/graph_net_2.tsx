@@ -5,7 +5,7 @@ import { MagnifyingGlassIcon, ArrowsPointingOutIcon, SunIcon, MoonIcon } from '@
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
-const canvasSize = 3000;
+const canvasSize = 5000;
 const cellSize = 160;
 const center = { x: canvasSize / 2, y: canvasSize / 2 };
 const nodeRadius = 40;
