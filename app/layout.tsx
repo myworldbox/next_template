@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { CoreEnum } from "./core/core_enum";
 import "./globals.css";
 import GraphNet from "./item/graph/graph_net";
-import { CoreEnum } from "./core/core_enum";
 import GraphNet2 from "./item/graph/graph_net_2";
 
 const geistSans = Geist({
@@ -91,8 +91,8 @@ export default function RootLayout({
           [
             { from: "司馬防", to: "司馬懿", type: Step.next },
             { from: "司馬懿", to: "王凌", type: Step.parallel },
-            { from: "司馬懿", to: "諸葛亮", type: Step.parallel },
             { from: "司馬懿", to: "柏夫人", type: Step.parallel },
+            { from: "司馬懿", to: "諸葛亮", type: Step.parallel },
             { from: "司馬懿", to: "曹真", type: Step.parallel },
             { from: "秦伯南", to: "曹真", type: Step.next },
             { from: "曹真", to: "曹爽", type: Step.next },

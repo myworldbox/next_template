@@ -17,7 +17,7 @@ const pairHash = (a, b) => {
   return h;
 };
 
-export default function GraphNet({ focus, relations }: any) {
+export default function GraphNet({ focus, relations }: { focus: string; relations: Array<{ from: string; to: string; type: CoreEnum.Step }> }) {
   const [positions, setPositions] = useState(new Map());
   const [graph, setGraph] = useState(new Map());
   const [scale, setScale] = useState(1);
