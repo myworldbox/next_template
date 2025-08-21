@@ -1,11 +1,11 @@
 "use client"
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { SunIcon, MoonIcon } from '@heroicons/react/24/solid';
+import { MagnifyingGlassIcon, SunIcon, MoonIcon } from '@heroicons/react/24/solid';
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
-const limit = 1000;
+const limit = 100;
 const canvasSize = 5000;
 const cellSize = 160;
 const nodeRadius = 40;
@@ -64,6 +64,7 @@ const generateMultiLayerPermutations = (layers, indices, limit) => {
   const totalPerms = layerPerms.reduce((acc, p) => acc * p.length, 1);
   
   if (totalPerms <= limit) {
+    // Generate all combinations
     const combine = (current, layerIdx) => {
       if (layerIdx === indices.length) {
         perms.push(current);
@@ -75,6 +76,7 @@ const generateMultiLayerPermutations = (layers, indices, limit) => {
     };
     combine([], 0);
   } else {
+    // Sample permutations
     for (let i = 0; i < limit; i++) {
       const combination = indices.map(idx => {
         const perms = layerPerms[indices.indexOf(idx)];
@@ -248,7 +250,7 @@ export default function GraphMatrix({ focus, relations }) {
       }
     }
 
-    // Layering
+    // Assign nodes to layers based on depth from focus
     const levels = new Map();
     const visited = new Set();
     const queue = [[focus, 0]];
@@ -273,6 +275,7 @@ export default function GraphMatrix({ focus, relations }) {
     const depths = Array.from(layerMap.keys()).sort((a, b) => a - b);
     let layers = depths.map(d => layerMap.get(d).slice());
 
+    // Initialize with degree-based sorting
     const sortLayerByDegree = (layer) => {
       return layer.sort((a, b) => {
         const aDeg = (graph.get(a)?.[Step.next]?.size || 0) +
@@ -292,7 +295,9 @@ export default function GraphMatrix({ focus, relations }) {
     let { sameDepthCrossings, diffDepthCrossings } = countCrossings(bestLayers, graph, relations);
     minCrossingsLocal = sameDepthCrossings + diffDepthCrossings;
 
+    // Multi-layer permutation optimization
     for (let numLayers = 1; numLayers <= layers.length; numLayers++) {
+      // Optimize the first numLayers together
       const indices = Array.from({ length: numLayers }, (_, i) => i);
       const multiPerms = generateMultiLayerPermutations(layers, indices, limit);
       let localMin = minCrossingsLocal;
@@ -320,6 +325,7 @@ export default function GraphMatrix({ focus, relations }) {
       if (minCrossingsLocal === 0) break;
     }
 
+    // Final single-layer refinement if crossings remain
     if (minCrossingsLocal > 0) {
       for (let li = 0; li < bestLayers.length; li++) {
         const perms = generatePermutations(bestLayers[li]);
@@ -469,86 +475,75 @@ export default function GraphMatrix({ focus, relations }) {
       const toXpx = center.x + toPos.x * cellSize;
       const toYpx = center.y - toPos.y * cellSize;
 
-      const drawOrthogonal = (color, key, markerEnd, dashArray) => {
-        // Decide whether to go horizontal-then-vertical (H→V) or vertical-then-horizontal (V→H)
-        const goHorizontalFirst =
-          Math.abs(toXpx - fromXpx) >= Math.abs(toYpx - fromYpx);
+      const drawEdge = (color, key, markerEnd, dashArray) => {
+        let d;
+        if (type === Step.parallel) {
+          const midY = (fromYpx + toYpx) / 2;
+          let c1x = fromXpx;
+          let c2x = toXpx;
+          let ctrlY = midY;
 
-        // Start/end adjusted so the segments grow out from node edges
-        let sx = fromXpx;
-        let sy = fromYpx;
-        let tx = toXpx;
-        let ty = toYpx;
+          const sameRow = fromPos.y === toPos.y;
+          const sameCol = fromPos.x === toPos.x;
+          const dir = (pairHash(from, to) & 1) ? 1 : -1;
+          let bendX = 0;
+          let bendY = 0;
 
-        if (goHorizontalFirst) {
-          const hxDir = Math.sign(toXpx - fromXpx || 1);
-          const vyDir = Math.sign(toYpx - fromYpx || 1);
+          if (sameRow) {
+            bendY = dir * 40;
+            const minX = Math.min(fromPos.x, toPos.x);
+            const maxX = Math.max(fromPos.x, toPos.x);
+            const hasNodeBetween = [...positions.entries()].some(
+              ([_, pos]) => pos.y === fromPos.y && pos.x > minX && pos.x < maxX
+            );
+            if (hasNodeBetween) {
+              bendY = dir * Math.max(cellSize * 0.6, nodeRadius * 2 + 16);
+            }
+          } else if (sameCol) {
+            bendX = dir * 40;
+            const minY = Math.min(fromPos.y, toPos.y);
+            const maxY = Math.max(fromPos.y, toPos.y);
+            const hasNodeBetween = [...positions.entries()].some(
+              ([_, pos]) => pos.x === fromPos.x && pos.y > minY && pos.y < maxY
+            );
+            if (hasNodeBetween) {
+              bendX = dir * Math.max(cellSize * 0.6, nodeRadius * 2 + 16);
+            }
+          }
+          c1x = fromXpx + bendX;
+          c2x = toXpx + bendX;
+          ctrlY = (fromYpx + toYpx) / 2 + bendY;
 
-          // Move start along horizontal
-          sx = fromXpx + hxDir * nodeRadius;
-          sy = fromYpx;
-
-          // Move end along vertical
-          tx = toXpx;
-          ty = toYpx - vyDir * nodeRadius;
-
-          const mx = tx; // bend at same x as target
-          const my = sy; // and same y as start
-
-          segs.push(
-            <path
-              key={`${key}-${from}-${to}`}
-              d={`M${sx},${sy} L${mx},${my} L${tx},${ty}`}
-              stroke={color}
-              strokeWidth="3"
-              fill="none"
-              markerEnd={markerEnd || undefined}
-              strokeDasharray={dashArray || undefined}
-              className="transition-all duration-300"
-              style={{ filter: isDarkMode ? 'drop-shadow(0 0 4px rgba(255,255,255,0.3))' : 'drop-shadow(0 0 4px rgba(0,0,0,0.2))' }}
-            />
-          );
+          d = `M${fromXpx},${fromYpx} C${c1x},${ctrlY} ${c2x},${ctrlY} ${toXpx},${toYpx}`;
         } else {
-          const vyDir = Math.sign(toYpx - fromYpx || 1);
-          const hxDir = Math.sign(toXpx - fromXpx || 1);
-
-          // Move start along vertical
-          sx = fromXpx;
-          sy = fromYpx + vyDir * nodeRadius;
-
-          // Move end along horizontal
-          tx = toXpx - hxDir * nodeRadius;
-          ty = toYpx;
-
-          const mx = sx; // bend at same x as start
-          const my = ty; // and same y as target
-
-          segs.push(
-            <path
-              key={`${key}-${from}-${to}`}
-              d={`M${sx},${sy} L${mx},${my} L${tx},${ty}`}
-              stroke={color}
-              strokeWidth="3"
-              fill="none"
-              markerEnd={markerEnd || undefined}
-              strokeDasharray={dashArray || undefined}
-              className="transition-all duration-300"
-              style={{ filter: isDarkMode ? 'drop-shadow(0 0 4px rgba(255,255,255,0.3))' : 'drop-shadow(0 0 4px rgba(0,0,0,0.2))' }}
-            />
-          );
+          const midY = fromYpx + (toYpx - fromYpx) / 2;
+          d = `M${fromXpx},${fromYpx} L${fromXpx},${midY} L${toXpx},${midY} L${toXpx},${toYpx}`;
         }
+
+        segs.push(
+          <path
+            key={`${key}-${from}-${to}`}
+            d={d}
+            stroke={color}
+            strokeWidth="3"
+            fill="none"
+            markerEnd={markerEnd || undefined}
+            strokeDasharray={dashArray || undefined}
+            className="transition-all duration-300"
+            style={{ filter: isDarkMode ? 'drop-shadow(0 0 4px rgba(255,255,255,0.3))' : 'drop-shadow(0 0 4px rgba(0,0,0,0.2))' }}
+          />
+        );
       };
 
       if (type === Step.prev) {
-        drawOrthogonal(isDarkMode ? '#f87171' : '#dc2626', 'prev', 'url(#arrow-prev)', null);
+        drawEdge(isDarkMode ? '#f87171' : '#dc2626', 'prev', 'url(#arrow-prev)', null);
       } else if (type === Step.next) {
-        drawOrthogonal(isDarkMode ? '#34d399' : '#16a34a', 'next', 'url(#arrow-next)', null);
+        drawEdge(isDarkMode ? '#34d399' : '#16a34a', 'next', 'url(#arrow-next)', null);
       } else if (type === Step.parallel) {
-        // draw a single dashed undirected orthogonal edge between the pair
         const k = [from, to].sort().join('|');
         if (!drawnPar.has(k)) {
           drawnPar.add(k);
-          drawOrthogonal(isDarkMode ? '#60a5fa' : '#2563eb', 'parallel', null, '6 6');
+          drawEdge(isDarkMode ? '#60a5fa' : '#2563eb', 'parallel', null, '6 6');
         }
       }
     });
