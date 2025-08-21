@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { CoreEnum } from "./core/core_enum";
 import "./globals.css";
 import GraphNet from "./item/graph/graph_net";
+import GraphMatrix from "./item/graph/graph_matrix";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -33,6 +34,25 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         {children}
+
+        <GraphMatrix focus="A" relations={
+          [
+            { from: "B", to: "C", type: Step.prev },
+            { from: "A", to: "H", type: Step.prev },
+
+            { from: "H", to: "I", type: Step.parallel },
+            { from: "A", to: "B", type: Step.parallel },
+            { from: "C", to: "D", type: Step.parallel },
+            { from: "K", to: "L", type: Step.parallel },
+
+            { from: "C", to: "E", type: Step.next },
+            { from: "A", to: "G", type: Step.next },
+            { from: "A", to: "F", type: Step.next },
+            { from: "H", to: "J", type: Step.next },
+            { from: "H", to: "K", type: Step.next },
+            { from: "K", to: "M", type: Step.next },
+          ]
+        } />
 
         <GraphNet focus="A" relations={
           [
