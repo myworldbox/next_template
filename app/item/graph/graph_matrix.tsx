@@ -62,7 +62,7 @@ const generateMultiLayerPermutations = (layers, indices, limit) => {
   const perms = [];
   const layerPerms = indices.map(i => generatePermutations(layers[i]));
   const totalPerms = layerPerms.reduce((acc, p) => acc * p.length, 1);
-  
+
   if (totalPerms <= limit) {
     // Generate all combinations
     const combine = (current, layerIdx) => {
@@ -279,11 +279,11 @@ export default function GraphMatrix({ focus, relations }) {
     const sortLayerByDegree = (layer) => {
       return layer.sort((a, b) => {
         const aDeg = (graph.get(a)?.[Step.next]?.size || 0) +
-                     (graph.get(a)?.[Step.prev]?.size || 0) +
-                     (graph.get(a)?.[Step.parallel]?.size || 0);
+          (graph.get(a)?.[Step.prev]?.size || 0) +
+          (graph.get(a)?.[Step.parallel]?.size || 0);
         const bDeg = (graph.get(b)?.[Step.next]?.size || 0) +
-                     (graph.get(b)?.[Step.prev]?.size || 0) +
-                     (graph.get(b)?.[Step.parallel]?.size || 0);
+          (graph.get(b)?.[Step.prev]?.size || 0) +
+          (graph.get(b)?.[Step.parallel]?.size || 0);
         return bDeg - aDeg;
       });
     };
@@ -516,9 +516,25 @@ export default function GraphMatrix({ focus, relations }) {
 
           d = `M${fromXpx},${fromYpx} C${c1x},${ctrlY} ${c2x},${ctrlY} ${toXpx},${toYpx}`;
         } else {
+          // First vertical segment
+          const p1 = `${fromXpx},${fromYpx}`;
           const midY = fromYpx + (toYpx - fromYpx) / 2;
-          d = `M${fromXpx},${fromYpx} L${fromXpx},${midY} L${toXpx},${midY} L${toXpx},${toYpx}`;
+          const p2 = `${fromXpx},${midY}`;
+
+          // Second horizontal segment
+          const dx = toXpx - fromXpx;
+          const dy = toYpx - midY;
+          const diagLength = Math.min(Math.abs(dx), Math.abs(dy));
+          const diagX = toXpx - Math.sign(dx) * diagLength;
+          const diagY = toYpx - Math.sign(dy) * diagLength;
+          const p3 = `${diagX},${midY}`;
+
+          // Final 45-degree diagonal segment
+          const p4 = `${toXpx},${toYpx}`;
+
+          d = `M${p1} L${p2} L${p3} L${p4}`;
         }
+
 
         segs.push(
           <path

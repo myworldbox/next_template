@@ -37,14 +37,16 @@ export default function RootLayout({
 
         <GraphMatrix focus="A" relations={
           [
-            { from: "B", to: "C", type: Step.prev },
-            { from: "A", to: "H", type: Step.prev },
+            // { from: "B", to: "C", type: Step.prev },
+            // { from: "A", to: "H", type: Step.prev },
 
             { from: "H", to: "I", type: Step.parallel },
             { from: "A", to: "B", type: Step.parallel },
             { from: "C", to: "D", type: Step.parallel },
             { from: "K", to: "L", type: Step.parallel },
 
+            { from: "C", to: "B", type: Step.next },
+            { from: "H", to: "A", type: Step.next },
             { from: "C", to: "E", type: Step.next },
             { from: "A", to: "G", type: Step.next },
             { from: "A", to: "F", type: Step.next },
