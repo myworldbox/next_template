@@ -5,7 +5,7 @@ import { MagnifyingGlassIcon, SunIcon, MoonIcon } from '@heroicons/react/24/soli
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
-const limit = 1000;
+const limit = 2000;
 const canvasSize = 5000;
 const cellSize = 160;
 const nodeRadius = 40;

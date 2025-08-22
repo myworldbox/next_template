@@ -5,7 +5,7 @@ import { MagnifyingGlassIcon, SunIcon, MoonIcon } from '@heroicons/react/24/soli
 import { CoreEnum } from '../../core/core_enum';
 
 const Step = CoreEnum.Step;
-const limit = 100;
+const limit = 1000;
 const canvasSize = 5000;
 const cellSize = 160;
 const nodeRadius = 40;
@@ -62,7 +62,7 @@ const generateMultiLayerPermutations = (layers, indices, limit) => {
   const perms = [];
   const layerPerms = indices.map(i => generatePermutations(layers[i]));
   const totalPerms = layerPerms.reduce((acc, p) => acc * p.length, 1);
-
+  
   if (totalPerms <= limit) {
     // Generate all combinations
     const combine = (current, layerIdx) => {
@@ -279,11 +279,11 @@ export default function GraphMatrix({ focus, relations }) {
     const sortLayerByDegree = (layer) => {
       return layer.sort((a, b) => {
         const aDeg = (graph.get(a)?.[Step.next]?.size || 0) +
-          (graph.get(a)?.[Step.prev]?.size || 0) +
-          (graph.get(a)?.[Step.parallel]?.size || 0);
+                     (graph.get(a)?.[Step.prev]?.size || 0) +
+                     (graph.get(a)?.[Step.parallel]?.size || 0);
         const bDeg = (graph.get(b)?.[Step.next]?.size || 0) +
-          (graph.get(b)?.[Step.prev]?.size || 0) +
-          (graph.get(b)?.[Step.parallel]?.size || 0);
+                     (graph.get(b)?.[Step.prev]?.size || 0) +
+                     (graph.get(b)?.[Step.parallel]?.size || 0);
         return bDeg - aDeg;
       });
     };

@@ -86,7 +86,7 @@ export default function RootLayout({
           ]
         } />
 
-        <GraphNet focus="司馬懿" relations={
+        <GraphMatrix focus="司馬懿" relations={
           [
             { from: "司馬防", to: "司馬懿", type: Step.next },
             { from: "司馬懿", to: "王凌", type: Step.parallel },
